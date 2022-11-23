@@ -12,6 +12,10 @@
   "activationEvents": [
     "onCommand:vue-extract-component.extractVueComponent"
   ],
+  "repository": {
+    "url": "https://github.com/dsalex1/vue-extract-component"
+  },
+  "publisher": "dsalex1",
   "main": "./out/extension.js",
   "contributes": {
     "commands": [

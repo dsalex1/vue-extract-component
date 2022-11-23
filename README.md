@@ -1,6 +1,6 @@
 # vue-extract-component README
 
-This extension makes it possible to extract a part of the template of a vue.js component to be extracted into its own file.
+This extension makes it possible to extract a part of the template of a vue.js component into its own file.
 
 ## Features
 

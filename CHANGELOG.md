@@ -1,5 +1,9 @@
 # Change Log
 
+### [0.0.4] - 2022-11-23
+
+-   added logo
+
 ## [0.0.3] - 2022-11-23
 
 -   Added type extraction for props and typescript-in-template support

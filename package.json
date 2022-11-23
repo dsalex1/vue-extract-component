@@ -2,7 +2,8 @@
   "name": "vue-extract-component",
   "displayName": "Vue Extract Component",
   "description": "",
-  "version": "0.0.3",
+  "version": "0.0.4",
+  "icon": "logo.png",
   "engines": {
     "vscode": "^1.73.0"
   },

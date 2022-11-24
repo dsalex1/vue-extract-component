@@ -4,7 +4,9 @@ import { posix } from "path";
 import { default as traverse } from '@babel/traverse'
 import { parse } from '@babel/parser'
 import lineColumn = require("line-column");
+import htmlparser2 = require("htmlparser2");
 import * as ts from "typescript";
+import { Document as HTMLDocument } from "domhandler";
 
 export async function extractVueComponent() {
     let editor = vscode.window.activeTextEditor;
@@ -31,36 +33,100 @@ export async function extractVueComponent() {
     let newFileContent = Buffer.from(await newComponentCode(editor), "utf8")
     let parentFileContent = Buffer.from(await parentComponentCode(editor, selectedFile), "utf8")
 
-    await vscode.workspace.fs.writeFile(newFileURI, newFileContent);
+    //TODO: fix the imports by organizing
     await vscode.workspace.fs.writeFile(editor.document.uri, parentFileContent);
+    await new Promise((resolve) => setTimeout(() => resolve(""), 500)) //somehow we get an modified twice error, if we dont wait before organizing imports
+    await vscode.commands.executeCommand('editor.action.organizeImports')
 
-    vscode.window.showTextDocument(newFileURI, { preview: false });
+    //TODO: for the type of the props we probably need some imports, we could also format and quickfix the file meanwhile
+    await vscode.workspace.fs.writeFile(newFileURI, newFileContent);
+    await vscode.window.showTextDocument(newFileURI, { preview: false });
+    //await vscode.commands.executeCommand('editor.action.sourceAction', {"kind": "source.addMissingImports","apply": "first"})//FIXME:this shit aint working, maybe we need to manually add the types
+    await new Promise((resolve) => setTimeout(() => resolve(""), 500)) //somehow we get an modified twice error, if we dont wait before formatting
+    await vscode.commands.executeCommand('editor.action.formatDocument')
+
 
     vscode.window.showInformationMessage(`Extracted component to ${currentPath}/${selectedFile}.vue`);
 }
 
-function getGlobals(code: string) {
-    const jsMatcher = /(?:v-(?!for)[-\[\]a-zA-Z]|:|\.|#|@)[^<> \s=&'"]*\s*=\s*(?:"(.*?)"|'(.*?)')|v-for*\s*=\s*(?:"[^"]* in \s*([^"]*)"|'[^']* in \s*([^']*)')|\{\{\s*(.*?)\s*\}\}/g
+type Node = {
+    startIndex: number;
+    attribs: Record<string, string>
+    children: Node[];
+    type: string;
+    data: string;
+}
+type MappedNode = {
+    startIndex: number;
+    attrs: [string, string][]
+    children: MappedNode[];
+    data: string[];
+}
+function mapHTMLtoJSON(node: Node): MappedNode {
+    return {
+        startIndex: node.startIndex,
+        attrs: Object.entries(node.attribs || {}).filter(([key, value]) => key.match(/(?:v-[-\[\]a-zA-Z]+|:|\.|#|@)[^<> \s=&'"]*/)),
+        children: node.children
+            ?.filter(node => node.type != "script")
+            .filter(node => node.children?.length > 0 || node.attribs || node.data?.includes("{{") && node.data?.includes("}}"))
+            .map(childNode => mapHTMLtoJSON(childNode)),
+        data: [...(node.data?.matchAll(/\{\{(.*?)\}\}/g) || [])].map(s => s[1].trim())
+    }
+}
+/**
+ * this function folds the JSON structure into a string of code which can be anylysed to find unbound variables
+ */
+function foldHTMLJSONToJS(node: MappedNode) {
+    let restMapped = ""
+    restMapped += [
+        ...node.attrs.filter(([name]) => name != "v-for").map(([_, value]) => value),
+        ...node.data
+    ].filter(a => a).map(a => `\n(${a}); //START_INDEX:${node.startIndex}`).join("")
+    restMapped += node.children ? node.children.map(child => foldHTMLJSONToJS(child)).join("") : ""
 
-    let jsInCode = [...code.matchAll(jsMatcher)]
-    let babelTSCode = jsInCode.map(s => `(${s[1] || s[2] || s[3] || s[4] || s[5]});\n`).join("")
-    const babelCode = ts.transpileModule(babelTSCode, { compilerOptions: { module: ts.ModuleKind.CommonJS } });
+    const vForAttribute = node.attrs.find(([name]) => name == "v-for")
+    //TODO: handle v-slot props
+    if (vForAttribute) {
+        const [_, value, name, index, expression] = vForAttribute[1].match(/\(?(.*?)\s*(?:,\s*(.*?)\s*)?(?:,\s*(.*?)\s*)?\)?\s+in\s+(.*)/) || []
+        return `\n{\n${[value, name, index].filter(s => s).map(s => `let ${s}=[];`).join("\n")}\n(${expression}); //START_INDEX:${node.startIndex}${restMapped}\n}`
+    } else {
+        return restMapped
+    }
+}
 
-    const ast = parse(babelCode.outputText, { errorRecovery: true })
+/**
+ * this function analyses code to find unbound variables
+ */
+function getGlobals(inputCode: string) {
+    const dom = htmlparser2.parseDocument(inputCode, { withStartIndices: true }) as unknown as Node;
+    const babelTSCode = foldHTMLJSONToJS(mapHTMLtoJSON(dom));
+    const babelCode = ts.transpileModule(babelTSCode, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+    console.log(babelTSCode, babelCode)
 
-    const globals = new Map<string, { line: number, col: number }>()
+    try {
+        var ast = parse(babelCode, { errorRecovery: true });
+    } catch (e: any) {
+        throw `Error while parsing babelCode '${e.toString()}' in:\n${babelCode}`
+    }
+    const globals = new Map();
     traverse(ast, {
         ReferencedIdentifier: (path: any) => {
-            const name = path.node.name
+            const name = path.node.name;
             if (path.scope.hasBinding(name, true))
-                return
+                return;
             if (!globals.has(path.node.name)) {
-                let offset = jsInCode[path.node.loc.start.line - 1][0].indexOf(path.node.name)
-                globals.set(path.node.name, lineColumn(code).fromIndex(jsInCode[path.node.loc.start.line - 1].index! + offset)!)
+                const tagStartIndex = babelCode.split("\n")[path.node.loc.start.line - 1].match(/\/\START_INDEX\:(\d*)$/)?.[1] || -1;
+                globals.set(path.node.name, lineColumn(inputCode).fromIndex(inputCode.indexOf(path.node.name, +tagStartIndex)));
             }
         }
-    } as any)
+    } as any);
     return [...globals.entries()]
+        .filter(([key]) => // substract all globals that are explicitly whitelisted in vue templates, and also $event, which is a global in onclick's
+            !('Infinity,undefined,NaN,isFinite,isNaN,' +
+                'parseFloat,parseInt,decodeURI,decodeURIComponent,encodeURI,encodeURIComponent,' +
+                'Math,Number,Date,Array,Object,Boolean,String,RegExp,Map,Set,JSON,Intl,require' +
+                '$event').split(",").includes(key)
+        )
 }
 
 async function getTypeForURIPosition(uri: vscode.Uri, position: vscode.Position) {
@@ -100,7 +166,6 @@ async function newComponentCode(editor: vscode.TextEditor) {
     let selectionText = editor.document.getText(editor.selection);
 
     let props = await getProps(editor)
-
     return `<template>
 ${selectionText}
 </template>
@@ -111,6 +176,6 @@ import { toRefs } from "vue";
 const props = defineProps<{
 ${props.map(g => `    ${g.name}: ${g.type};`).join("\n")}
 }>();
-let { ${props.map(g => g.name).join(", ")} } = toRefs(props);
+const { ${props.map(g => g.name).join(", ")} } = toRefs(props);
 </script>`;
 }

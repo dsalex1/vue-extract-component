@@ -2,7 +2,7 @@
   "name": "vue-extract-component",
   "displayName": "Vue Extract Component",
   "description": "",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "icon": "logo.png",
   "engines": {
     "vscode": "^1.73.0"
@@ -11,7 +11,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:vue-extract-component.extractVueComponent"
+    "onCommand:vue-extract-component.extractVueComponent",
+    "onLanguage:vue"
   ],
   "repository": {
     "url": "https://github.com/dsalex1/vue-extract-component"
@@ -49,6 +50,11 @@
   },
   "dependencies": {
     "@babel/traverse": "^7.20.1",
-    "line-column": "^1.0.2"
+    "htmlparser": "^1.7.7",
+    "htmlparser2": "^8.0.1",
+    "libxmljs": "^0.19.10",
+    "line-column": "^1.0.2",
+    "parse5": "^7.1.2",
+    "xml-js": "^1.6.11"
   }
 }

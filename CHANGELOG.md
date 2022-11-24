@@ -1,6 +1,12 @@
 # Change Log
 
-### [0.0.4] - 2022-11-23
+## [0.0.5] - 2022-11-23
+
+-   added code action
+-   improved handling of scoped variables inside v-for's
+-   added organize imports for parent component and format document for new component
+
+## [0.0.4] - 2022-11-23
 
 -   added logo
 
